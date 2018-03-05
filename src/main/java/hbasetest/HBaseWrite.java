@@ -1,5 +1,7 @@
 package hbasetest;
 
+import io.memorymq.MemoryMQImpl;
+
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -14,6 +16,8 @@ import org.apache.hadoop.hbase.client.ConnectionFactory;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Table;
 import org.apache.hadoop.hbase.util.Bytes;
+
+import parse.bean.MessageB0;
 
 public class HBaseWrite {
 	public static AtomicInteger counter = new AtomicInteger(0);
@@ -30,37 +34,102 @@ public class HBaseWrite {
 	}
 
 	public static void main(String[] args) throws Exception {
+		MemoryMQImpl<MessageB0> mq = new MemoryMQImpl<>(10000);
 		new Listener().start();
 		for (int i = 0; i < 1; i++) {
-			new HBaseWriterThread().start();
+			new HBaseWriterThread(mq).start();
 			Thread.sleep(100); // 过1秒钟启动一个
+		}
+		while(true){
+			mq.put(new MessageB0());
+			Thread.sleep(1000);
 		}
 	}
 }
 
 class HBaseWriterThread extends Thread {
+	private MemoryMQImpl<MessageB0> mq;
+
+	public HBaseWriterThread(MemoryMQImpl<MessageB0> mq) {
+		this.mq = mq;
+	}
+
 	@Override
 	public void run() {
-		Random random = new Random();
-		List<Put> list = new ArrayList<Put>();
-		try {
-			for (int i = 1;; i++) {
-				Table table = HBaseWrite.connection.getTable(TableName.valueOf("t_book"));
-				byte[] bytes = new byte[20];
-				random.nextBytes(bytes);
-				Put put = new Put(("row" + i).getBytes());
-				for (int j = 0; j < 20; j++) {
-					put.addColumn(Bytes.toBytes("base"), Bytes.toBytes("name" + j), Bytes.toBytes("bbbb" + j));
+		List<MessageB0> list = new ArrayList<MessageB0>();
+		boolean sendResult = true; // 上次发送的结果
+
+		while (true) {
+			MessageB0 msg = null;
+			if (sendResult) { // 上次发送成功了,这次才读取消息,否则,不读取
+				msg = mq.get();
+			}
+			if (msg == null) { // mq没了
+				if (list.size() == 0) { // 桥中和本方法的list中都没有消息,就继续死循环
+					this.sleepSafe(100);
+					continue;
+				} else { // 桥中没有消息,但是本方法的list中有,就发送
+					boolean result = this.send(list);
+					if (result) { // 如果发送成功
+						list.clear();
+						sendResult = true;
+					} else {
+						sendResult = false;
+					}
 				}
-				list.add(put);
-				HBaseWrite.counter.incrementAndGet();
-				if (i % 100 == 0) { // 每100个put会保存一次
-					table.put(list);
-					table.close();
-					list.clear();
+			} else { //
+				list.add(msg);
+				if (list.size() >= 20) {
+					boolean result = this.send(list);
+					if (result) {
+						list.clear();
+						sendResult = true;
+					} else {
+						sendResult = false;
+					}
 				}
 			}
+
+		}
+	}
+
+	private boolean send(List<MessageB0> msgList) {
+		Random random = new Random();
+		Table table = null;
+		List<Put> putList = new ArrayList<Put>();
+		try {
+			table = HBaseWrite.connection.getTable(TableName.valueOf("t_book"));
+			for (MessageB0 msg : msgList) {
+				byte[] bytes = new byte[20];
+				random.nextBytes(bytes);
+				Put put = new Put(bytes);
+				for (int j = 0; j < 30; j++) {
+					put.addColumn(Bytes.toBytes("base"), Bytes.toBytes("name" + j), Bytes.toBytes("bbbb" + j));
+				}
+				put.addColumn(Bytes.toBytes("base"), Bytes.toBytes("r10"), Bytes.toBytes(msg.getR10()));
+				putList.add(put);
+			}
+
+			HBaseWrite.counter.getAndAdd(msgList.size());
+			table.put(putList);
+			return true;
 		} catch (Exception e) {
+			e.printStackTrace();
+			return false;
+		} finally {
+			try {
+				table.close();
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+
+		}
+	}
+
+	private void sleepSafe(long millis) {
+		try {
+			Thread.sleep(millis);
+		} catch (InterruptedException e) {
 			e.printStackTrace();
 		}
 	}
