@@ -1,5 +1,6 @@
 package io.memorymq;
 /**
+ * 22222
  * 内存消息队列,是第一级缓存
  */
 public interface MemoryMQ<T> {
