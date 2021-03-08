@@ -4,6 +4,7 @@
 	<groupId>HBaseTest</groupId>
 	<artifactId>HBaseTest</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
+<!-- 1 -->
 	<dependencies>
 		<!-- https://mvnrepository.com/artifact/org.apache.hbase/hbase-client -->
 		<!-- <dependency> -->
